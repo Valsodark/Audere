@@ -3,13 +3,6 @@ import {NavLink} from "react-router-dom";
 import "./Button.css"
 
 type Props = {name : string, url : string};
-export const Button: FC<Props> = (prop) => {
-    return (
-        <button>
-            <NavLink className={"btn2"} to={prop.url}><span className="spn2">{prop.name}</span></NavLink>
-        </button>
-    )
-}
 
 export const LoginButton: FC<Props> = (prop) => {
     return (
