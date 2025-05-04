@@ -9,7 +9,7 @@ import SettingsSvg from "../icons/settings.svg?react"
 export const Login: FC = () => {
     return (
         <>
-            <Navbar name={""} url={""}>
+            <Navbar>
                 <NavItem url={"/"} name={"😀"}> </NavItem>
                 <NavItem url={"*"} name={"😀"}> </NavItem>
                 <NavItem url={""} name={<SettingsSvg/>}>
