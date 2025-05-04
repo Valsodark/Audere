@@ -1,0 +1,19 @@
+.btn2 {
+    margin: 0px 10px;
+    text-transform: uppercase;
+    color: #e6e4ed;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.8rem;
+    height: 80px;
+}
+.btn2:hover {
+    border-bottom: solid 2px #e6e4ed ;
+}
+
+button {
+    font-family: "Inclusive Sans", sans-serif;
+    text-decoration: none;
+    border: none;
+    background-color: transparent;
+}
