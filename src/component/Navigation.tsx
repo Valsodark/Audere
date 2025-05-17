@@ -53,10 +53,10 @@ export const NavItem: FC<Utilities> = (utility) =>{
 export const NavMenu: FC = () =>{
     return (
         <ul className={"nav-menu"}>
-            <NavMenuItem url={""} name={<ChuckSvg/>}></NavMenuItem>
+            <NavMenuItem url={"https://norris.audere.club/"} name={<ChuckSvg/>}></NavMenuItem>
             <NavMenuItem url={""} name={<MinecraftSvg/>}></NavMenuItem>
             <NavMenuItem url={""} name={<ConvertortSvg/>}></NavMenuItem>
-            <NavMenuItem url={""} name={<TakeAwaySvg/>}></NavMenuItem>
+            <NavMenuItem url={"http://food_delivery.audere.club/"} name={<TakeAwaySvg/>}></NavMenuItem>
 
         </ul>
     )
