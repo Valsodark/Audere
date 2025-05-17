@@ -56,8 +56,7 @@ export const NavMenu: FC = () =>{
             <NavMenuItem url={"https://norris.audere.club/"} name={<ChuckSvg/>}></NavMenuItem>
             <NavMenuItem url={""} name={<MinecraftSvg/>}></NavMenuItem>
             <NavMenuItem url={""} name={<ConvertortSvg/>}></NavMenuItem>
-            <NavMenuItem url={"http://food_delivery.audere.club/"} name={<TakeAwaySvg/>}></NavMenuItem>
-
+            <NavMenuItem url={"https://food_delivery.audere.club/"} name={<TakeAwaySvg/>}></NavMenuItem>
         </ul>
     )
 }
