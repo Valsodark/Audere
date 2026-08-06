@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Audere",
+  "version": "1.0.0",
+  "identifier": "app.concord.client",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Audere",
+        "width": 1150,
+        "height": 750,
+        "minWidth": 800,
+        "minHeight": 520,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --lang=en-US"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "publisher": "Audere",
+    "copyright": "Copyright (c) 2026 Audere",
+    "category": "SocialNetworking",
+    "shortDescription": "Self-hosted encrypted chat, voice and screen sharing",
+    "longDescription": "Audere is a self-hosted, end-to-end encrypted chat, voice, video and screen-sharing client. The relay server only ever sees ciphertext."
+  }
+}

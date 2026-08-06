@@ -1,0 +1,1804 @@
+/*
+ * Concord visual system.
+ *
+ * The layout encodes the encryption model: the dark left rail is the
+ * "relay side" (ciphertext territory — mono type, key fingerprints),
+ * the warm paper main column is the "room side" (plaintext, readable
+ * only here). The dotted seam between them is the E2E boundary.
+ *
+ * Fonts are bundled locally on purpose: a privacy client must not
+ * phone a CDN on startup.
+ */
+
+/* ---------- fonts ---------- */
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(fonts/fraunces-600-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: italic;
+  font-weight: 600;
+  font-display: swap;
+  src: url(fonts/fraunces-600italic-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url(fonts/manrope-var-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url(fonts/manrope-var-cyrillic.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/plexmono-400-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/plexmono-400-cyrillic.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(fonts/plexmono-500-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(fonts/plexmono-500-cyrillic.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* ---------- tokens ---------- */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* relay side (dark) */
+  --rail-bg: #1a201d;
+  --rail-card: #141a17;
+  --rail-raised: #26332c;
+  --parchment: #ede6d6;
+  --sage: #7c8f84;
+  --sage-dim: #5f6e66;
+
+  /* room side (paper) */
+  --paper: #efede0;
+  --card: #fbfaf4;
+  --ink: #232a22;
+  --ink-muted: #6b7263;
+  --hairline: #d8d3c0;
+  --spruce: #2a362e;
+
+  /* accents */
+  --amber: #d9a441;
+  --amber-deep: #c98a2c;
+  --green: #73a969;
+  --danger: #b4543a;
+  --danger-hover: #9a4530;
+
+  --font-ui: 'Manrope', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-mono: 'IBM Plex Mono', Consolas, monospace;
+
+  /* Shared height for the channel bar and the chat drawer head so their
+     bottom hairlines meet on one line. */
+  --topbar-h: 58px;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  background: var(--paper);
+  color: var(--ink);
+  user-select: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+::selection {
+  background: rgba(217, 164, 65, 0.35);
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber-deep);
+  outline-offset: 2px;
+}
+
+/* ---------- join screen ---------- */
+
+#join-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--rail-bg);
+}
+
+#join-form {
+  background: var(--paper);
+  border-radius: 14px;
+  padding: 36px 32px 32px;
+  width: 430px;
+  max-width: 92vw;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+}
+
+#join-form h1 {
+  text-align: center;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 600;
+  font-size: 34px;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+#join-form .tagline {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 22px;
+}
+
+#join-form label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: 12px 0 5px;
+}
+
+#join-form input {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 10px 12px;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  outline: none;
+  user-select: text;
+}
+
+#join-form input::placeholder {
+  color: var(--ink-muted);
+  opacity: 0.7;
+}
+
+#join-form input:focus {
+  border-color: var(--amber-deep);
+  box-shadow: 0 0 0 2px rgba(201, 138, 44, 0.25);
+}
+
+#join-form .hint {
+  font-size: 12px;
+  color: var(--ink-muted);
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+#join-btn {
+  margin-top: 22px;
+  background: var(--ink);
+  color: var(--parchment);
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#join-btn:hover {
+  background: var(--spruce);
+}
+
+#join-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 10px;
+  text-align: center;
+}
+
+/* ---------- app layout ---------- */
+
+#app {
+  position: relative; /* anchors the chat drawer overlay */
+  display: flex;
+  height: 100vh;
+}
+
+/* ---------- sidebar: the relay side ---------- */
+
+#sidebar {
+  width: 250px;
+  min-width: 250px;
+  background: var(--rail-bg);
+  color: var(--parchment);
+  display: flex;
+  flex-direction: column;
+}
+
+#room-header {
+  padding: 16px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 19px;
+  border-bottom: 1px solid var(--rail-card);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#room-header .lock {
+  margin-right: 6px;
+  font-size: 14px;
+}
+
+#user-list-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 10px;
+}
+
+#user-list-wrap h3 {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sage);
+  padding: 0 8px 8px;
+}
+
+#user-list {
+  list-style: none;
+}
+
+#user-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: var(--sage);
+  font-weight: 500;
+}
+
+#user-list li:hover {
+  background: var(--rail-raised);
+  color: var(--parchment);
+}
+
+#user-list .dot {
+  width: 7px;
+  height: 7px;
+  min-width: 7px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+#user-list .in-voice {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+#user-list .ping {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--sage-dim);
+  white-space: nowrap;
+}
+
+/* When both are shown, the ping figure takes the auto margin and the
+   voice icon sits flush against it. */
+#user-list .ping + .in-voice {
+  margin-left: 0;
+}
+
+/* ---------- voice panel ---------- */
+
+#voice-panel {
+  border-top: 1px solid var(--rail-card);
+  padding: 12px 10px;
+}
+
+#voice-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--green);
+  padding: 0 4px 8px;
+}
+
+#voice-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.vbtn {
+  background: var(--rail-raised);
+  color: var(--parchment);
+  border: none;
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.vbtn:hover:not(:disabled) {
+  background: var(--sage-dim);
+}
+
+.vbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.vbtn.primary {
+  background: var(--amber);
+  color: var(--rail-card);
+  flex: 1;
+  font-weight: 600;
+}
+
+.vbtn.primary:hover:not(:disabled) {
+  background: var(--amber-deep);
+}
+
+.vbtn.primary .p2p {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  opacity: 0.75;
+  margin-left: 4px;
+}
+
+.vbtn.danger {
+  background: var(--danger);
+  color: #fff;
+  flex: 1;
+  font-weight: 600;
+}
+
+.vbtn.danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+.vbtn.active {
+  background: var(--amber);
+  color: var(--rail-card);
+}
+
+/* ---------- stream quality popover ---------- */
+
+/* Share button and its chevron read as one pill split down the middle, not
+   as a circle with something stuck to it. */
+#screen-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+#screen-wrap .cbtn {
+  width: 46px;
+  border-radius: 999px 0 0 999px;
+}
+
+#btn-share-menu {
+  width: 22px;
+  height: 46px;
+  border: none;
+  border-left: 1px solid rgba(237, 230, 214, 0.12);
+  border-radius: 0 999px 999px 0;
+  background: var(--rail-raised);
+  color: var(--parchment);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+#btn-share-menu:hover,
+#btn-share-menu.open {
+  background: var(--sage-dim);
+}
+
+/* While sharing, both halves carry the active colour. */
+#screen-wrap:has(.cbtn.on) #btn-share-menu {
+  background: var(--amber);
+  color: var(--rail-card);
+  border-left-color: rgba(20, 26, 23, 0.18);
+}
+
+#screen-wrap:has(.cbtn.on) #btn-share-menu:hover {
+  background: var(--amber-deep);
+}
+
+#btn-share-menu svg.ic {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+#share-menu {
+  position: absolute;
+  bottom: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 190px;
+  background: var(--rail-card);
+  border: 1px solid var(--rail-raised);
+  border-radius: 12px;
+  padding: 10px 8px 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+}
+
+/* Action row at the top of the dark popover; .act-item is styled for the
+   light menus, so the colours are restated here. */
+#share-menu .act-item {
+  color: var(--parchment);
+  font-size: 13px;
+}
+
+#share-menu .act-item:hover {
+  background: var(--rail-raised);
+}
+
+#share-menu .act-item svg.ic {
+  color: var(--amber);
+}
+
+#share-menu-sep {
+  height: 1px;
+  background: var(--rail-raised);
+  margin: 6px 4px 2px;
+}
+
+#share-menu .menu-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sage);
+  padding: 6px 8px 6px;
+}
+
+.opt-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  padding: 7px 8px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--parchment);
+  cursor: pointer;
+  text-align: left;
+}
+
+.opt-row:hover {
+  background: var(--rail-raised);
+}
+
+/* radio dot: hollow ring, amber core once chosen */
+.opt-dot {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--sage-dim);
+}
+
+.opt-row.selected .opt-dot {
+  border-color: var(--amber);
+  background:
+    radial-gradient(circle, var(--amber) 0 3px, transparent 3px);
+}
+
+.opt-row.selected {
+  color: var(--amber);
+}
+
+#share-menu .menu-note {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--sage-dim);
+  padding: 8px 8px 2px;
+}
+
+#me-bar {
+  background: var(--rail-card);
+  padding: 11px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- main column: the room side ---------- */
+
+#main {
+  position: relative; /* anchors the floating call bar */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* the stitched seam — where plaintext ends and ciphertext begins */
+  border-left: 2px dotted var(--sage-dim);
+}
+
+#channel-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--topbar-h);
+  padding: 0 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Hash and channel name keep baseline alignment with each other while the
+   bar itself centers everything vertically. */
+.channel-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#channel-bar .hash {
+  font-family: var(--font-mono);
+  color: var(--amber-deep);
+  font-size: 17px;
+}
+
+#channel-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+}
+
+.e2e-badge {
+  background: var(--amber);
+  color: var(--rail-card);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  border: 2px solid var(--rail-card);
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-left: 6px;
+  letter-spacing: 0.08em;
+  align-self: center;
+}
+
+#btn-chat {
+  position: relative;
+  align-self: center;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#btn-chat:hover {
+  border-color: var(--amber-deep);
+}
+
+#btn-chat.open {
+  background: var(--amber);
+  border-color: var(--amber-deep);
+}
+
+#chat-unread {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 2px 5px;
+  min-width: 16px;
+  text-align: center;
+}
+
+/* ---------- activities ---------- */
+
+/* pushes itself and the chat button to the right edge of the bar */
+#activities-wrap {
+  position: relative;
+  margin-left: auto;
+  align-self: center;
+}
+
+#btn-activities {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#btn-activities:hover {
+  border-color: var(--amber-deep);
+}
+
+#btn-activities.open {
+  background: var(--amber);
+  border-color: var(--amber-deep);
+}
+
+#btn-activities svg.ic {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+}
+
+#activities-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+  z-index: 30;
+}
+
+#activities-menu .menu-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  padding: 6px 10px 4px;
+}
+
+.act-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  padding: 9px 10px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.act-item:hover {
+  background: var(--paper);
+}
+
+.act-item svg.ic {
+  width: 16px;
+  height: 16px;
+  color: var(--danger);
+}
+
+/* ---------- per-user audio menu ---------- */
+
+#user-menu {
+  position: fixed;
+  z-index: 40; /* above the activity layer and menus, below dialogs */
+  min-width: 220px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+
+#user-menu-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#user-menu-volrow {
+  padding: 6px 10px 10px;
+}
+
+/* second slider, only present while that peer shares system audio */
+#user-menu-streamrow {
+  padding: 0 10px 10px;
+}
+
+#user-menu-volrow .volrow-head,
+#user-menu-streamrow .volrow-head {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 8px;
+}
+
+#user-menu-vol,
+#user-menu-streamvol {
+  width: 100%;
+  accent-color: var(--amber-deep);
+  cursor: pointer;
+}
+
+/* roster note when a member is locally muted or re-volumed */
+#user-list .vol-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--amber);
+  white-space: nowrap;
+}
+
+#user-list .vol-tag svg.ic {
+  width: 12px;
+  height: 12px;
+  display: block;
+  color: var(--danger);
+}
+
+/* The activity tile is an empty placeholder that only does layout; the
+   player lives in #activity-layer, an overlay JS keeps glued to the
+   placeholder's rectangle. An iframe reloads if it moves in the DOM, so
+   it must never sit inside a tile that focusing reparents. */
+.video-tile.activity {
+  background: #000;
+  cursor: default;
+}
+
+#activity-layer {
+  position: absolute;
+  z-index: 10; /* above the grid, below the call bar and dialogs */
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+#activity-frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* placeholder while the player script loads */
+#activity-frame:empty::before {
+  content: 'connecting to youtube\2026';
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sage-dim);
+}
+
+#activity-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* expand / end controls, top-right like the peer Control button */
+.tile-acts {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+#activity-layer:hover .tile-acts,
+#activity-layer.focused .tile-acts {
+  opacity: 1;
+}
+
+.tile-act-btn {
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--parchment);
+  border: none;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tile-act-btn:hover {
+  background: var(--amber);
+  color: var(--rail-card);
+}
+
+.tile-act-btn svg.ic {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+/* the expand button swaps its glyph with focus state */
+#activity-layer svg.ic-min {
+  display: none;
+}
+
+#activity-layer.focused svg.ic-max {
+  display: none;
+}
+
+#activity-layer.focused svg.ic-min {
+  display: block;
+}
+
+/* ---------- watch-together prompt ---------- */
+
+#activity-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 20, 18, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+#activity-box {
+  background: var(--paper);
+  border-radius: 14px;
+  padding: 28px;
+  width: 460px;
+  max-width: 92vw;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+#activity-box h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+  margin-bottom: 14px;
+}
+
+#activity-box h2 svg.ic {
+  width: 18px;
+  height: 18px;
+  color: var(--danger);
+  vertical-align: -3px;
+  margin-right: 6px;
+}
+
+#activity-form {
+  display: flex;
+  flex-direction: column;
+}
+
+#activity-form label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 5px;
+}
+
+#activity-url {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 10px 12px;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  outline: none;
+  user-select: text;
+}
+
+#activity-url::placeholder {
+  color: var(--ink-muted);
+  opacity: 0.7;
+}
+
+#activity-url:focus {
+  border-color: var(--amber-deep);
+  box-shadow: 0 0 0 2px rgba(201, 138, 44, 0.25);
+}
+
+#activity-box .hint {
+  font-size: 12px;
+  color: var(--ink-muted);
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+#activity-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+#activity-buttons .vbtn {
+  padding: 10px 18px;
+  font-weight: 600;
+}
+
+#activity-buttons .vbtn:not(.primary) {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+}
+
+#activity-buttons .vbtn:not(.primary):hover {
+  background: var(--hairline);
+}
+
+/* ---------- video grid ---------- */
+
+#video-grid {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 8px;
+  padding: 12px 16px 84px; /* bottom space so the call bar never covers tiles */
+  background: var(--rail-card);
+  overflow-y: auto;
+}
+
+/* placeholder when nothing is shared; hidden while the grid is visible */
+#stage-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  opacity: 0.7;
+}
+
+#video-grid:not([hidden]) + #stage-empty {
+  display: none;
+}
+
+/* ---------- focus mode (clicked tile fills the stage) ---------- */
+
+#focus-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding: 12px 16px 8px;
+  background: var(--rail-card);
+}
+
+#focus-stage .video-tile {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  aspect-ratio: auto;
+  min-height: 0;
+}
+
+/* the rest of the call collapses into a filmstrip under the focused tile */
+#video-grid.strip {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 16px 84px; /* keep the strip clear of the call bar */
+}
+
+#video-grid.strip .video-tile {
+  flex: 0 0 180px;
+  width: 180px;
+}
+
+#video-grid.strip .tile-initial {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+
+/* ---------- floating call bar ---------- */
+
+#call-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--rail-card);
+  border-radius: 999px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+}
+
+.cbtn {
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 50%;
+  background: var(--rail-raised);
+  color: var(--parchment);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cbtn:hover {
+  background: var(--sage-dim);
+}
+
+.cbtn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* mic muted */
+.cbtn .ic-off {
+  display: none;
+}
+
+.cbtn.off {
+  background: var(--danger);
+  color: #fff;
+}
+
+.cbtn.off:hover {
+  background: var(--danger-hover);
+}
+
+.cbtn.off .ic-on {
+  display: none;
+}
+
+.cbtn.off .ic-off {
+  display: block;
+}
+
+/* cam / screen actively sharing */
+.cbtn.on {
+  background: var(--amber);
+  color: var(--rail-card);
+}
+
+.cbtn.on:hover {
+  background: var(--amber-deep);
+}
+
+/* hang up — red pill, handset rotated down */
+.cbtn.leave {
+  width: auto;
+  padding: 0 22px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  margin-left: 6px;
+}
+
+.cbtn.leave:hover {
+  background: var(--danger-hover);
+}
+
+.cbtn.leave svg {
+  transform: rotate(135deg);
+}
+
+.video-tile {
+  position: relative;
+  width: 320px;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--rail-raised);
+  border-radius: 10px;
+  overflow: hidden;
+  flex: 1 1 280px;
+  cursor: pointer;
+}
+
+.video-tile.has-video {
+  background: #000;
+}
+
+.video-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none;
+}
+
+.video-tile.has-video video {
+  display: block;
+}
+
+/* avatar shown while the participant has no video */
+.tile-avatar {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-tile.has-video .tile-avatar {
+  display: none;
+}
+
+.tile-initial {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 30px;
+  color: var(--parchment);
+  background: var(--sage-dim);
+}
+
+/* Mirror only the local camera self-view (like a mirror); a mirrored
+   screen share would show backwards text. */
+.video-tile.mirror video {
+  transform: scaleX(-1);
+}
+
+.tile-label {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--parchment);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 5px;
+  padding: 3px 8px;
+}
+
+.tile-ctl {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--parchment);
+  border: none;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.video-tile:hover .tile-ctl {
+  opacity: 1;
+}
+
+.video-tile.controlling {
+  outline: 2px solid var(--amber);
+}
+
+.video-tile.controlling .tile-ctl {
+  opacity: 1;
+  background: var(--amber);
+  color: var(--rail-card);
+}
+
+.video-tile.controlling video {
+  cursor: crosshair;
+}
+
+/* ---------- control banner ---------- */
+
+#control-banner {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+
+#control-banner.granting {
+  background: var(--danger);
+  color: #fff;
+}
+
+#control-banner.driving {
+  background: var(--amber);
+  color: var(--rail-card);
+}
+
+/* ---------- consent dialog ---------- */
+
+#consent {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 20, 18, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+#consent-box {
+  background: var(--paper);
+  border-radius: 14px;
+  padding: 28px;
+  width: 440px;
+  max-width: 92vw;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+#consent-box h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+  margin-bottom: 12px;
+}
+
+#consent-box p {
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+.consent-warn {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+#consent-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+#consent-buttons .vbtn {
+  padding: 10px 18px;
+  font-weight: 600;
+}
+
+#consent-buttons .vbtn:not(.danger) {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+}
+
+#consent-buttons .vbtn:not(.danger):hover {
+  background: var(--hairline);
+}
+
+/* ---------- screen-share source picker ---------- */
+
+#picker {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 20, 18, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+#picker-box {
+  background: var(--paper);
+  border-radius: 14px;
+  width: 720px;
+  max-width: 94vw;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+#picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 10px;
+}
+
+#picker-head h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+}
+
+#picker-head h2 svg.ic {
+  width: 18px;
+  height: 18px;
+  color: var(--amber-deep);
+  vertical-align: -3px;
+  margin-right: 6px;
+}
+
+#picker-refresh {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: 5px 7px;
+  border-radius: 6px;
+}
+
+#picker-refresh:hover {
+  background: var(--hairline);
+  color: var(--ink);
+}
+
+#picker-refresh svg.ic {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+#picker-body {
+  overflow-y: auto;
+  padding: 0 24px 12px;
+}
+
+.picker-section {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: 12px 0 8px;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  /* also styles the "capturing previews…" / error placeholder text */
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.src-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 6px;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.src-tile:hover {
+  border-color: var(--amber-deep);
+}
+
+.src-tile.selected {
+  border-color: var(--amber);
+  outline: 2px solid var(--amber);
+}
+
+.src-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: var(--rail-card);
+  border-radius: 6px;
+}
+
+.src-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 2px 2px;
+}
+
+#picker-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 24px 20px;
+  border-top: 1px solid var(--hairline);
+}
+
+#picker-foot .picker-note {
+  margin-right: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
+#picker-foot .vbtn {
+  flex: 0 0 auto;
+  padding: 10px 18px;
+  font-weight: 600;
+}
+
+#picker-foot .vbtn:not(.primary) {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+}
+
+#picker-foot .vbtn:not(.primary):hover {
+  background: var(--hairline);
+}
+
+/* ---------- chat drawer ---------- */
+
+/* Overlay slide-over: animating only its own transform, so the sidebar
+   and main column never reflow while it opens/closes. */
+#chat-drawer {
+  width: 340px;
+  min-width: 340px;
+  background: var(--paper);
+  border-left: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  /* in normal flex flow: opening pushes the stage narrower instead of
+     overlaying it */
+  transition: margin-right 0.22s ease;
+}
+
+#chat-drawer.closed {
+  margin-right: -340px;
+  visibility: hidden;
+  transition: margin-right 0.22s ease, visibility 0s 0.22s;
+}
+
+#chat-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--topbar-h);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.drawer-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+}
+
+#chat-close {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+#chat-close:hover {
+  background: var(--hairline);
+  color: var(--ink);
+}
+
+/* ---------- messages ---------- */
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  user-select: text;
+}
+
+.message {
+  align-self: flex-start;
+  max-width: 88%;
+}
+
+.message .msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.msg-author {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.msg-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+.msg-body {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  border-top-left-radius: 4px;
+  padding: 9px 13px;
+  color: var(--ink);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message.self {
+  align-self: flex-end;
+}
+
+.message.self .msg-head {
+  justify-content: flex-end;
+}
+
+.message.self .msg-author {
+  display: none; /* the bubble color already says "you" */
+}
+
+.message.self .msg-body {
+  background: var(--spruce);
+  border: none;
+  color: var(--parchment);
+  border-radius: 12px;
+  border-bottom-right-radius: 4px;
+}
+
+.message.system {
+  align-self: center;
+  max-width: 90%;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+/* ---------- audio unlock banner ---------- */
+
+#audio-unlock {
+  background: var(--amber);
+  color: var(--rail-card);
+  text-align: center;
+  padding: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ---------- chat input ---------- */
+
+#chat-form {
+  padding: 4px 14px 8px;
+}
+
+#chat-input {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  color: var(--ink);
+  padding: 12px 14px;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  outline: none;
+  user-select: text;
+}
+
+#chat-input::placeholder {
+  color: var(--ink-muted);
+}
+
+#chat-input:focus {
+  border-color: var(--amber-deep);
+  box-shadow: 0 0 0 2px rgba(201, 138, 44, 0.2);
+}
+
+#chat-input:disabled {
+  opacity: 0.5;
+}
+
+/* what the composer promises, in the composer's own words */
+#chat-form::after {
+  content: 'sealed on this machine · keys never leave it';
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  padding: 6px 2px 8px;
+}
+
+/* ---------- scrollbars ---------- */
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(35, 42, 34, 0.25);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#sidebar ::-webkit-scrollbar-thumb {
+  background: rgba(237, 230, 214, 0.15);
+}
+
+/* ---------- inline svg icons ---------- */
+
+svg.ic {
+  width: 15px;
+  height: 15px;
+  vertical-align: -3px;
+  flex-shrink: 0;
+}
+
+#room-header .lock svg.ic {
+  color: var(--amber);
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+
+#btn-chat svg.ic {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+}
+
+#user-list .in-voice svg.ic {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.tile-ctl svg.ic {
+  width: 12px;
+  height: 12px;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+#audio-unlock svg.ic,
+#control-banner svg.ic {
+  margin-right: 5px;
+}
+
+#consent-box h2 svg.ic {
+  width: 18px;
+  height: 18px;
+  color: var(--danger);
+  vertical-align: -3px;
+  margin-right: 5px;
+}
+
+#chat-close svg.ic {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.message.system.warn {
+  color: var(--danger);
+}
+
+.message.system.warn svg.ic {
+  width: 13px;
+  height: 13px;
+  margin-right: 5px;
+  vertical-align: -2px;
+}

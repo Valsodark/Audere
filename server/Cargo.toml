@@ -1,0 +1,18 @@
+[package]
+name = "concord-server"
+version = "1.0.0"
+edition = "2021"
+description = "Concord relay server: routes end-to-end encrypted blobs between room members"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+futures-util = "0.3"
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = true
+strip = true
+opt-level = 3
+codegen-units = 1

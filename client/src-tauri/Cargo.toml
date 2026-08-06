@@ -1,0 +1,56 @@
+[package]
+name = "concord"
+version = "1.0.0"
+edition = "2021"
+description = "Audere — self-hosted, end-to-end encrypted chat, voice, video and screen sharing"
+license = "AGPL-3.0-only"
+repository = "https://github.com/Valsodark/Audere"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_MediaFoundation",
+    "Win32_Storage_Xps",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# SIMD JPEG encoder that takes BGRA straight from the capture DIB — the
+# per-frame cost is what caps the screen-share frame rate.
+jpeg-encoder = { version = "0.6", features = ["simd"] }
+# The #[implement] macro for the audio activation callback emits
+# `windows_core::` paths, so the crate has to be nameable here.
+windows-core = "0.61"
+base64 = "0.22"
+windows-capture = "2.0.0"
+# The BGRA -> NV12 pass is the screen-share bottleneck; splitting it across
+# cores is what keeps capture at display refresh rate.
+rayon = "1"
+
+# Screen capture encodes JPEG per frame — unoptimized that runs ~10x slower
+# and shares crawl, so dev builds optimize the hot code too.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = true
+strip = true
+opt-level = 3
+codegen-units = 1
