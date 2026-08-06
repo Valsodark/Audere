@@ -428,6 +428,12 @@ function ensurePeer(peerId) {
       track.addEventListener('mute', () => clearTileStream(peerId));
       track.addEventListener('unmute', () => setTileStream(peerId, stream));
       track.addEventListener('ended', () => clearTileStream(peerId));
+      // Report what actually arrives: a black tile is either no frames at all
+      // (a sending or network problem) or frames that fail to render.
+      setTimeout(() => {
+        reportReceiveStats(peerId);
+        reportTileState(peerId);
+      }, 8000);
     }
   };
 
@@ -489,11 +495,15 @@ function closePeer(peerId) {
   if (controlling === peerId) stopControlling();
   const pa = peerAudio.get(peerId);
   if (pa) {
-    try { pa.src?.disconnect(); } catch { /* already gone */ }
-    try { pa.gain?.disconnect(); } catch { /* already gone */ }
+    // Each of the peer's streams has its own source node and element.
+    for (const entry of pa.streams.values()) {
+      try { entry.src?.disconnect(); } catch { /* already gone */ }
+      entry.el?.remove();
+    }
+    try { pa.mic?.disconnect(); } catch { /* already gone */ }
+    try { pa.share?.disconnect(); } catch { /* already gone */ }
     peerAudio.delete(peerId);
   }
-  document.getElementById('audio-' + peerId)?.remove();
   clearTileStream(peerId);
 }
 
@@ -516,16 +526,19 @@ async function tuneVideoSender(sender) {
   }
 }
 
-// Prefer VP9 (much better than VP8 on screen content at a given bitrate),
-// then H.264 for hardware encoding, before falling back to whatever is left.
+// Prefer H.264, which is hardware-encoded on essentially every GPU. VP9 looks
+// better per bit on screen content, but the frames we hand WebRTC come from a
+// script-inserted track rather than a camera, and Chromium will not always
+// hardware-encode those — a 1080p60 VP9 software encode then falls so far
+// behind that the far side sees a black or frozen tile.
 function preferVideoCodec(pc) {
   if (!RTCRtpSender.getCapabilities) return;
   const caps = RTCRtpSender.getCapabilities('video');
   if (!caps) return;
   const rank = c => {
     const m = c.mimeType.toLowerCase();
-    if (m === 'video/vp9') return 0;
-    if (m === 'video/h264') return 1;
+    if (m === 'video/h264') return 0;
+    if (m === 'video/vp9') return 1;
     if (m === 'video/vp8') return 2;
     return 3;
   };
@@ -1489,9 +1502,14 @@ function ensureTile(id) {
 
 function setTileStream(id, stream, mirror) {
   const tile = ensureTile(id);
-  tile.querySelector('video').srcObject = stream;
+  const video = tile.querySelector('video');
+  video.srcObject = stream;
   tile.classList.add('has-video');
   tile.classList.toggle('mirror', !!mirror);
+  // autoplay alone is not always enough: an element that was hidden, moved
+  // between the grid and the focus stage, or attached before its stream can
+  // stay parked on the first frame, which looks exactly like a black tile.
+  video.play().catch(() => {});
 }
 
 function clearTileStream(id) {
@@ -2176,9 +2194,71 @@ async function checkUplink() {
   );
 }
 
+// What WebRTC actually managed to send, as opposed to what we captured. A
+// share that looks perfect locally but black to everyone else fails here, so
+// the numbers are reported rather than inferred.
+// Frames can arrive and decode while the element still shows nothing, so the
+// element's own state is reported next to the transport numbers.
+function reportTileState(peerId) {
+  const tile = document.getElementById('tile-' + peerId);
+  if (!tile) return;
+  const v = tile.querySelector('video');
+  const text =
+    `Tile ${peers.get(peerId)?.name || peerId}: ${v.videoWidth}x${v.videoHeight}, ` +
+    `readyState ${v.readyState}, ${v.paused ? 'paused' : 'playing'}, ` +
+    `hasVideo ${tile.classList.contains('has-video')}, ` +
+    `stream ${v.srcObject ? v.srcObject.getVideoTracks().length + ' video track(s)' : 'none'}, ` +
+    `track ${v.srcObject?.getVideoTracks()[0]?.readyState || '-'}` +
+    `${v.srcObject?.getVideoTracks()[0]?.muted ? ' (muted)' : ''}`;
+  addSystemMessage(text);
+  if (isDesktopApp) window.__TAURI__.core.invoke('hw_log', { line: text }).catch(() => {});
+}
+
+async function reportReceiveStats(peerId) {
+  const st = pcs.get(peerId);
+  if (!st) return;
+  let stats;
+  try { stats = await st.pc.getStats(); } catch { return; }
+  const name = peers.get(peerId)?.name || peerId;
+  stats.forEach(r => {
+    if (r.type !== 'inbound-rtp' || r.kind !== 'video') return;
+    const text =
+      `Incoming from ${name}: received ${r.framesReceived ?? 0} frames, ` +
+      `decoded ${r.framesDecoded ?? 0}, dropped ${r.framesDropped ?? 0}, ` +
+      `${r.frameWidth ?? '?'}x${r.frameHeight ?? '?'}, ` +
+      `codec ${(r.codecId && stats.get(r.codecId)?.mimeType) || '?'}`;
+    addSystemMessage(text);
+    if (isDesktopApp) window.__TAURI__.core.invoke('hw_log', { line: text }).catch(() => {});
+  });
+}
+
+async function reportSendStats() {
+  if (!pcs.size) return;
+  const lines = [];
+  for (const [id, st] of pcs) {
+    let stats;
+    try { stats = await st.pc.getStats(); } catch { continue; }
+    stats.forEach(r => {
+      if (r.type !== 'outbound-rtp' || r.kind !== 'video') return;
+      lines.push(
+        `${peers.get(id)?.name || id}: sent ${r.framesSent ?? 0} frames, ` +
+        `encoded ${r.framesEncoded ?? 0}, ${r.frameWidth ?? '?'}x${r.frameHeight ?? '?'}, ` +
+        `codec ${(r.codecId && stats.get(r.codecId)?.mimeType) || '?'}, ` +
+        `limited by ${r.qualityLimitationReason || 'nothing'}`
+      );
+    });
+  }
+  if (!lines.length) return;
+  const text = 'Outgoing share — ' + lines.join(' | ');
+  addSystemMessage(text);
+  if (isDesktopApp) window.__TAURI__.core.invoke('hw_log', { line: text }).catch(() => {});
+}
+
 function startAutoQuality() {
   stopAutoQuality();
   autoTimer = setInterval(checkUplink, AUTO_INTERVAL);
+  // One report a few seconds in, once the encoder has had time to settle.
+  setTimeout(() => { if (videoKind === 'screen') reportSendStats(); }, 8000);
 }
 
 function stopAutoQuality() {
