@@ -1159,6 +1159,17 @@ body {
   display: block;
 }
 
+/* noise suppression off: a preference, not the danger red of a dead mic */
+#btn-noise.off {
+  background: var(--rail-raised);
+  color: var(--sage-dim);
+}
+
+#btn-noise.off:hover {
+  background: var(--sage-dim);
+  color: var(--parchment);
+}
+
 /* cam / screen actively sharing */
 .cbtn.on {
   background: var(--amber);

@@ -370,7 +370,8 @@ function ensurePeer(peerId) {
   st = { pc, polite: myId > peerId, makingOffer: false, ignoreOffer: false, pending: [] };
   pcs.set(peerId, st);
 
-  for (const track of micStream.getTracks()) pc.addTrack(track, micStream);
+  const micOut = micSendStream || micStream;
+  for (const track of micOut.getTracks()) pc.addTrack(track, micOut);
   // A peer joining mid-share still needs the shared audio, and needs to be
   // told which stream it is.
   if (shareAudio) {
@@ -567,6 +568,63 @@ function retuneAllSenders() {
 
 // ---------- voice ----------
 
+// Discord-style noise suppression: the mic runs through RNNoise (a small
+// speech/noise net — rnnoise.wasm, built from client/noise-wasm) in a worklet
+// before reaching the peer connections. The browser's echoCancellation and
+// noiseSuppression still apply at capture, underneath; RNNoise stacks on top
+// and catches the keyboards, fans and room noise the built-in one misses.
+let noiseOn = localStorage.getItem('concord-denoise') !== '0';
+let micChain = null;      // { ctx, node, stream }
+let micSendStream = null; // what peers get: denoised when available, else raw
+
+async function buildMicChain(raw) {
+  const ctx = new AudioContext({ sampleRate: 48000 }); // RNNoise's native rate
+  try {
+    await ctx.audioWorklet.addModule('noise-worklet.js');
+    const module = await WebAssembly.compile(await (await fetch('rnnoise.wasm')).arrayBuffer());
+    const node = new AudioWorkletNode(ctx, 'denoise', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { module }
+    });
+    ctx.createMediaStreamSource(raw).connect(node);
+    const dest = ctx.createMediaStreamDestination();
+    node.connect(dest);
+    // Deliberately not connected to ctx.destination: no local monitoring.
+
+    // The processor instantiates the wasm in its constructor; wait for proof
+    // of life so a processor that died there means raw mic, not silence.
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('denoiser did not start')), 2000);
+      node.port.onmessage = e => {
+        if (e.data?.ready) { clearTimeout(timer); resolve(); }
+      };
+      node.onprocessorerror = () => { clearTimeout(timer); reject(new Error('denoiser crashed')); };
+    });
+    node.onprocessorerror = () => {
+      // Died mid-call: swap every sender back to the raw mic.
+      console.warn('denoiser crashed — sending raw mic');
+      if (!micStream) return;
+      const dead = dest.stream.getAudioTracks()[0];
+      micChain = null;
+      micSendStream = micStream;
+      for (const st of pcs.values()) {
+        for (const s of st.pc.getSenders()) {
+          if (s.track === dead) s.replaceTrack(micStream.getAudioTracks()[0]).catch(() => {});
+        }
+      }
+      updateVoiceUI();
+    };
+    node.port.postMessage({ bypass: !noiseOn });
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    return { ctx, node, stream: dest.stream };
+  } catch (e) {
+    ctx.close().catch(() => {});
+    throw e;
+  }
+}
+
 async function joinVoice() {
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
@@ -575,6 +633,13 @@ async function joinVoice() {
   } catch {
     addSystemMessage('microphone access denied — cannot join voice', true);
     return;
+  }
+  try {
+    micChain = await buildMicChain(micStream);
+    micSendStream = micChain.stream;
+  } catch (e) {
+    console.warn('noise suppression unavailable', e);
+    micSendStream = micStream;
   }
   // Create/resume the context inside this click so autoplay policy
   // cannot leave the per-peer gain graph suspended and silent.
@@ -597,6 +662,9 @@ function leaveVoice() {
   for (const id of [...pcs.keys()]) closePeer(id);
   micStream?.getTracks().forEach(t => t.stop());
   micStream = null;
+  micChain?.ctx.close().catch(() => {});
+  micChain = null;
+  micSendStream = null;
   inVoice = false;
   micMuted = false;
   removeTile('me');
@@ -1670,12 +1738,16 @@ function sendPings() {
 
 // ---------- per-peer audio: local mute + volume up to 200% ----------
 //
-// An <audio> element's volume caps at 100%, so each peer's stream is
-// routed through a Web Audio gain node instead. Chromium quirk: remote
-// WebRTC audio stays silent in a Web Audio graph unless the stream is
-// ALSO attached to a playing media element — so the element keeps
-// playing, but muted, and the audible path is the gain graph. Mute and
-// volume are purely local: nothing is sent to peers or the server.
+// The default playback path is the <audio> element itself: Chromium's echo
+// canceller only learns the far end from audio that media elements play, so
+// anything routed out through a Web Audio graph comes back in on the mic as
+// echo and everyone hears themselves (crbug.com/687574). The gain graph
+// exists only for volumes past the element's 100% cap — while a peer is
+// boosted, their element is muted, the graph carries them, and echo
+// cancellation is knowingly given up for that peer. Chromium quirk: remote
+// WebRTC audio stays silent in a Web Audio graph unless the stream is ALSO
+// attached to a media element, so the element stays attached either way.
+// Mute and volume are purely local: nothing is sent to peers or the server.
 
 let audioCtx = null;
 // peerId -> { mic, share, streams: Map<streamId, { el, src, kind }> }
@@ -1708,13 +1780,13 @@ function routePeerAudio(peerId, el, stream) {
     const ctx = getAudioCtx();
     if (!pa.mic) {
       pa.mic = ctx.createGain();
+      pa.mic.gain.value = 0; // element path is the default output
       pa.mic.connect(ctx.destination);
       pa.share = ctx.createGain();
+      pa.share.gain.value = 0;
       pa.share.connect(ctx.destination);
     }
     entry.src = ctx.createMediaStreamSource(stream);
-    el.muted = true; // output comes from the gain graph, not the element
-    if (ctx.state === 'suspended') showAudioUnlock();
   } catch { /* no Web Audio: element fallback, volume caps at 100% */ }
   classifyPeerAudio(peerId);
   applyPeerAudio(peerId);
@@ -1751,8 +1823,25 @@ function applyPeerAudio(peerId) {
   const micVol = p.muted ? 0 : (p.volume ?? 1);
   const shareVol = p.muted ? 0 : (p.streamVolume ?? 1);
   if (pa.mic) {
-    pa.mic.gain.value = micVol;
-    pa.share.gain.value = shareVol;
+    // Boosted (>100%) streams move to the gain graph; everything else plays
+    // through its element so echo cancellation keeps working (see above).
+    const boost = { mic: micVol > 1, share: shareVol > 1 };
+    pa.mic.gain.value = boost.mic ? micVol : 0;
+    pa.share.gain.value = boost.share ? shareVol : 0;
+    if ((boost.mic || boost.share) && getAudioCtx().state === 'suspended') {
+      showAudioUnlock();
+    }
+    for (const entry of pa.streams.values()) {
+      if (!entry.el) continue;
+      const kind = entry.kind === 'share' ? 'share' : 'mic';
+      const vol = kind === 'share' ? shareVol : micVol;
+      if (boost[kind] && entry.src) {
+        entry.el.muted = true; // audible path is the gain graph
+      } else {
+        entry.el.muted = !!p.muted;
+        entry.el.volume = Math.min(1, vol);
+      }
+    }
   } else {
     // Fallback path without Web Audio: one element, mic volume only.
     for (const entry of pa.streams.values()) {
@@ -1868,6 +1957,11 @@ function updateVoiceUI() {
   const btnMute = $('#btn-mute');
   btnMute.classList.toggle('off', micMuted);
   btnMute.title = micMuted ? 'Unmute microphone' : 'Mute microphone';
+
+  const btnNoise = $('#btn-noise');
+  btnNoise.hidden = !micChain; // wasm path failed: nothing to toggle
+  btnNoise.classList.toggle('off', !noiseOn);
+  btnNoise.title = noiseOn ? 'Noise suppression: on' : 'Noise suppression: off';
 
   const btnCam = $('#btn-cam');
   btnCam.classList.toggle('on', videoKind === 'cam');
@@ -1990,6 +2084,12 @@ applyChatState();
 $('#btn-voice').addEventListener('click', joinVoice);
 $('#btn-leave').addEventListener('click', leaveVoice);
 $('#btn-mute').addEventListener('click', toggleMute);
+$('#btn-noise').addEventListener('click', () => {
+  noiseOn = !noiseOn;
+  localStorage.setItem('concord-denoise', noiseOn ? '1' : '0');
+  micChain?.node.port.postMessage({ bypass: !noiseOn });
+  updateVoiceUI();
+});
 $('#btn-cam').addEventListener('click', () => (videoKind === 'cam' ? stopVideo() : startVideo('cam')));
 $('#btn-screen').addEventListener('click', () => (videoKind === 'screen' ? stopVideo() : openSharePicker()));
 
