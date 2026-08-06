@@ -23,7 +23,9 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": ["msi"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
     "publisher": "Audere",
     "copyright": "Copyright (c) 2026 Audere",
     "category": "SocialNetworking",

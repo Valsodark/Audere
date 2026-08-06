@@ -134,14 +134,25 @@ Because the UI is embedded at build time, editing anything under `client/ui/` ne
 
 ## Publishing a release
 
-Binaries are attached to a [GitHub Release](https://github.com/Valsodark/Audere/releases) so people can download them without installing Rust. Pushing a version tag builds and uploads them automatically:
+The client is published as a Windows installer on the [Releases page](https://github.com/Valsodark/Audere/releases), so people can install it without touching Rust. Pushing a version tag builds and uploads it automatically:
 
 ```powershell
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-[`.github/workflows/release.yml`](.github/workflows/release.yml) then builds both binaries on a Windows runner, packages them as `Audere-1.0.0-windows-x64.zip` together with the licence and readme, writes a SHA-256 checksum beside it, and opens the release as a **draft**. Review it on the Releases page and press Publish when it looks right — nothing goes public on its own.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) then builds the client on a Windows runner, produces `Audere-1.0.0-x64.msi`, writes a SHA-256 checksum beside it, and opens the release as a **draft**. Review it on the Releases page and press Publish when it looks right — nothing goes public on its own.
+
+The server is not shipped as a download. It is the piece you host yourself, it is a different audience from the people installing the client, and it builds in one command from source (`cargo build --release --manifest-path server/Cargo.toml`).
+
+To build the installer locally:
+
+```powershell
+cargo install tauri-cli --version "^2.0" --locked   # once
+cd client
+cargo tauri build
+# -> src-tauri\target\release\bundle\msi\Audere_1.0.0_x64_en-US.msi
+```
 
 The same workflow can be run by hand from the Actions tab, which is the easy way to confirm a build works before committing to a tag.
 

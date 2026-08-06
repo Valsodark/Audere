@@ -1,4 +1,4 @@
-# Builds Audere and attaches the binaries to a GitHub Release.
+# Builds the Audere client installer and attaches it to a GitHub Release.
 #
 # Triggered by pushing a version tag:
 #
@@ -32,32 +32,39 @@ jobs:
       # Without this every run recompiles the whole dependency tree.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            client/src-tauri
-            server
+          workspaces: client/src-tauri
 
-      - name: Build client
-        run: cargo build --release --manifest-path client/src-tauri/Cargo.toml
+      # The bundler that produces the .msi lives in the Tauri CLI, not cargo.
+      # Cached separately because `cargo install` is slow and rarely changes.
+      - name: Cache Tauri CLI
+        id: cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-v2-${{ runner.os }}
 
-      - name: Build server
-        run: cargo build --release --manifest-path server/Cargo.toml
+      - name: Install Tauri CLI
+        if: steps.cli-cache.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2.0" --locked
 
-      # Assets are named after the product rather than the crate, since this
-      # is what people see on the release page.
+      # WiX is fetched automatically on first use and produces the installer.
+      - name: Build installer
+        working-directory: client
+        run: cargo tauri build
+
       - name: Stage release files
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}" -replace '^v', ''
           if (-not $version) { $version = 'dev' }
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item client/src-tauri/target/release/concord.exe "dist/audere.exe"
-          Copy-Item server/target/release/concord-server.exe "dist/audere-server.exe"
-          Copy-Item LICENSE dist/
-          Copy-Item README.md dist/
-          Compress-Archive -Path dist/* -DestinationPath "Audere-$version-windows-x64.zip"
+          $msi = Get-ChildItem client/src-tauri/target/release/bundle/msi/*.msi |
+            Select-Object -First 1
+          if (-not $msi) { throw 'No .msi produced' }
+          $name = "Audere-$version-x64.msi"
+          Copy-Item $msi.FullName $name
           # A checksum lets people verify the download is intact and unaltered.
-          (Get-FileHash "Audere-$version-windows-x64.zip" -Algorithm SHA256).Hash |
-            Out-File "Audere-$version-windows-x64.zip.sha256" -Encoding ascii
+          (Get-FileHash $name -Algorithm SHA256).Hash |
+            Out-File "$name.sha256" -Encoding ascii
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -65,5 +72,5 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            Audere-*-windows-x64.zip
-            Audere-*-windows-x64.zip.sha256
+            Audere-*.msi
+            Audere-*.msi.sha256
