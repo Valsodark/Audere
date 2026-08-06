@@ -1,0 +1,69 @@
+# Builds Audere and attaches the binaries to a GitHub Release.
+#
+# Triggered by pushing a version tag:
+#
+#     git tag v1.0.0
+#     git push origin v1.0.0
+#
+# Can also be started by hand from the Actions tab, which is handy for
+# checking the build works before committing to a tag.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  # Needed to create the release and upload files to it.
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Without this every run recompiles the whole dependency tree.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            client/src-tauri
+            server
+
+      - name: Build client
+        run: cargo build --release --manifest-path client/src-tauri/Cargo.toml
+
+      - name: Build server
+        run: cargo build --release --manifest-path server/Cargo.toml
+
+      # Assets are named after the product rather than the crate, since this
+      # is what people see on the release page.
+      - name: Stage release files
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          if (-not $version) { $version = 'dev' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item client/src-tauri/target/release/concord.exe "dist/audere.exe"
+          Copy-Item server/target/release/concord-server.exe "dist/audere-server.exe"
+          Copy-Item LICENSE dist/
+          Copy-Item README.md dist/
+          Compress-Archive -Path dist/* -DestinationPath "Audere-$version-windows-x64.zip"
+          # A checksum lets people verify the download is intact and unaltered.
+          (Get-FileHash "Audere-$version-windows-x64.zip" -Algorithm SHA256).Hash |
+            Out-File "Audere-$version-windows-x64.zip.sha256" -Encoding ascii
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            Audere-*-windows-x64.zip
+            Audere-*-windows-x64.zip.sha256

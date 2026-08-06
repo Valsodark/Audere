@@ -132,6 +132,21 @@ audere/
 
 Because the UI is embedded at build time, editing anything under `client/ui/` needs a rebuild, not just a restart.
 
+## Publishing a release
+
+Binaries are attached to a [GitHub Release](https://github.com/Valsodark/Audere/releases) so people can download them without installing Rust. Pushing a version tag builds and uploads them automatically:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) then builds both binaries on a Windows runner, packages them as `Audere-1.0.0-windows-x64.zip` together with the licence and readme, writes a SHA-256 checksum beside it, and opens the release as a **draft**. Review it on the Releases page and press Publish when it looks right — nothing goes public on its own.
+
+The same workflow can be run by hand from the Actions tab, which is the easy way to confirm a build works before committing to a tag.
+
+Version numbers are cheap; use one tag per released build and never move a published tag, since anyone who downloaded the old one has no way to tell it changed.
+
 ## Antivirus warnings
 
 Audere captures the screen, captures system audio, and — only after an explicit click by the person being controlled — injects synthetic mouse and keyboard input. Those are the same capabilities remote-access malware uses, so heuristic scanners sometimes flag builds of this kind, particularly unsigned ones.
@@ -140,7 +155,31 @@ Two things help, and one actually fixes it:
 
 - The full source is here, and the binaries build from it with a plain `cargo build --release`, so the behaviour can be audited rather than trusted.
 - The executables carry publisher, copyright and description metadata, which unsigned malware usually lacks.
-- The real fix is an Authenticode code-signing certificate. Until a build is signed, Windows SmartScreen may warn on first run, and the warning fades as installs accumulate. A false positive can also be submitted to Microsoft at <https://www.microsoft.com/wdsi/filesubmission>.
+- The real fix is an Authenticode code-signing certificate (see below). Until a build is signed, Windows SmartScreen may warn on first run, and the warning fades as installs accumulate. A false positive can also be submitted to Microsoft at <https://www.microsoft.com/wdsi/filesubmission>.
+
+### Signing a build
+
+A certificate proves the binary came from a known identity and has not been altered since. Where to get one:
+
+| Option | Cost | Notes |
+|---|---|---|
+| [Certum Open Source](https://shop.certum.eu/open-source-code-signing.html) | ~€30–90/yr | Cheapest route for a public open-source project like this one. Requires ID verification; arrives on a hardware token. |
+| [Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) | ~$10/mo | Microsoft's own service, no hardware token to carry. Identity verification required. |
+| Standard OV (Sectigo, SSL.com, DigiCert) | ~$200–400/yr | Industry baseline. Hardware token is mandatory for all OV certificates since 2023. |
+| EV certificate | ~$400–700/yr | The only option that grants SmartScreen reputation immediately rather than earning it. |
+| Self-signed | free | Useful for testing the pipeline only. It does nothing for anyone else, since their machine does not trust your certificate. |
+
+Once you hold one, signing is a single command:
+
+```powershell
+# certificate installed in the Windows certificate store
+.\scripts\sign.ps1 -Thumbprint <cert-thumbprint>
+
+# or from a .pfx file
+.\scripts\sign.ps1 -PfxPath .\audere.pfx -PfxPassword (Read-Host -AsSecureString)
+```
+
+[`scripts/sign.ps1`](scripts/sign.ps1) signs both release binaries, timestamps them with an RFC 3161 server, and verifies the result against the same rules Windows applies to a downloaded program. Timestamping matters: without it, signatures stop being trusted the day the certificate expires; with it, anything signed while the certificate was valid stays valid.
 
 ## License
 
