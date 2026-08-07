@@ -909,34 +909,34 @@ let hwCaptureStop = null; // set while a hardware capture is running
 // Somewhere to put decoded VideoFrames that a peer connection can read.
 // Newer Chromium exposes VideoTrackGenerator; older builds have
 // MediaStreamTrackGenerator; a canvas works everywhere but costs a copy.
+// A canvas is used rather than VideoTrackGenerator, which looks like the
+// tidier option but fails silently: if its writer rejects, the track stays
+// live and completely empty, and the far side sees a black tile with a muted
+// track and no RTP at all. Painting into a canvas costs one GPU copy and is
+// observable — if frames stop, the count stops with them.
 function createFrameSink(width, height, fps) {
-  if (typeof VideoTrackGenerator === 'function') {
-    const gen = new VideoTrackGenerator();
-    const writer = gen.writable.getWriter();
-    return {
-      stream: new MediaStream([gen.track]),
-      write: frame => writer.write(frame).catch(() => frame.close())
-    };
-  }
-  if (typeof MediaStreamTrackGenerator === 'function') {
-    const gen = new MediaStreamTrackGenerator({ kind: 'video' });
-    const writer = gen.writable.getWriter();
-    return {
-      stream: new MediaStream([gen]),
-      write: frame => writer.write(frame).catch(() => frame.close())
-    };
-  }
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d', { desynchronized: true });
-  return {
+  const ctx = canvas.getContext('2d', { desynchronized: true, alpha: false });
+  const sink = {
     stream: canvas.captureStream(fps),
+    written: 0,
+    failed: 0,
+    lastError: null,
     write: frame => {
-      ctx.drawImage(frame, 0, 0);
-      frame.close();
+      try {
+        ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+        sink.written++;
+      } catch (e) {
+        sink.failed++;
+        sink.lastError = e.message || String(e);
+      } finally {
+        frame.close();
+      }
     }
   };
+  return sink;
 }
 
 async function startHwCapture(source, q) {
@@ -985,7 +985,14 @@ async function startHwCapture(source, q) {
     const secs = (performance.now() - t0) / 1000;
     let s = null;
     try { s = await invoke('hw_stats'); } catch { /* report what we have */ }
-    const parts = [`${width}x${height} hardware`, `decoded ${Math.round(frames / secs)} fps`];
+    const parts = [
+      `${width}x${height} hardware`,
+      `decoded ${Math.round(frames / secs)} fps`,
+      // The step that failed silently before: frames decoded but never
+      // painted mean the outgoing track carries nothing.
+      `painted ${Math.round(sink.written / secs)} fps` +
+        (sink.failed ? ` (${sink.failed} failed: ${sink.lastError})` : '')
+    ];
     if (s) {
       parts.push(
         `captured ${Math.round(s.captured / secs)} fps`,
@@ -2358,7 +2365,21 @@ function startAutoQuality() {
   stopAutoQuality();
   autoTimer = setInterval(checkUplink, AUTO_INTERVAL);
   // One report a few seconds in, once the encoder has had time to settle.
-  setTimeout(() => { if (videoKind === 'screen') reportSendStats(); }, 8000);
+  setTimeout(() => {
+    if (videoKind !== 'screen') return;
+    // The outgoing track's own settings: a track that reports no size is
+    // carrying nothing, whatever the capture side claims.
+    const track = videoStream?.getVideoTracks()[0];
+    if (track) {
+      const s = track.getSettings?.() || {};
+      const text =
+        `My share track: ${s.width ?? '?'}x${s.height ?? '?'} @${Math.round(s.frameRate ?? 0)}fps, ` +
+        `${track.readyState}${track.muted ? ' (muted)' : ''}`;
+      addSystemMessage(text);
+      if (isDesktopApp) window.__TAURI__.core.invoke('hw_log', { line: text }).catch(() => {});
+    }
+    reportSendStats();
+  }, 8000);
 }
 
 function stopAutoQuality() {
