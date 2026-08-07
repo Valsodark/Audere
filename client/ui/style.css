@@ -344,6 +344,10 @@ body {
   font-size: 12px;
 }
 
+#user-list li.speaking .in-voice svg.ic {
+  color: var(--green);
+}
+
 #user-list .ping {
   margin-left: auto;
   font-family: var(--font-mono);
@@ -433,22 +437,22 @@ body {
   color: var(--rail-card);
 }
 
-/* ---------- stream quality popover ---------- */
+/* ---------- call-bar split-pill popovers (stream quality, mic, camera) ---------- */
 
-/* Share button and its chevron read as one pill split down the middle, not
+/* A call button and its chevron read as one pill split down the middle, not
    as a circle with something stuck to it. */
-#screen-wrap {
+.ctl-wrap {
   position: relative;
   display: flex;
   align-items: center;
 }
 
-#screen-wrap .cbtn {
+.ctl-wrap .cbtn {
   width: 46px;
   border-radius: 999px 0 0 999px;
 }
 
-#btn-share-menu {
+.ctl-caret {
   width: 22px;
   height: 46px;
   border: none;
@@ -462,29 +466,40 @@ body {
   transition: background 0.12s;
 }
 
-#btn-share-menu:hover,
-#btn-share-menu.open {
+.ctl-caret:hover,
+.ctl-caret.open {
   background: var(--sage-dim);
 }
 
 /* While sharing, both halves carry the active colour. */
-#screen-wrap:has(.cbtn.on) #btn-share-menu {
+.ctl-wrap:has(.cbtn.on) .ctl-caret {
   background: var(--amber);
   color: var(--rail-card);
   border-left-color: rgba(20, 26, 23, 0.18);
 }
 
-#screen-wrap:has(.cbtn.on) #btn-share-menu:hover {
+.ctl-wrap:has(.cbtn.on) .ctl-caret:hover {
   background: var(--amber-deep);
 }
 
-#btn-share-menu svg.ic {
+/* Muted mic paints its whole pill the danger red. */
+.ctl-wrap:has(.cbtn.off) .ctl-caret {
+  background: var(--danger);
+  color: #fff;
+  border-left-color: rgba(20, 26, 23, 0.18);
+}
+
+.ctl-wrap:has(.cbtn.off) .ctl-caret:hover {
+  background: var(--danger-hover);
+}
+
+.ctl-caret svg.ic {
   width: 13px;
   height: 13px;
   display: block;
 }
 
-#share-menu {
+.ctl-menu {
   position: absolute;
   bottom: 58px;
   left: 50%;
@@ -498,18 +513,24 @@ body {
   z-index: 30;
 }
 
+/* Device names run long, so those two get more room. */
+#mic-menu,
+#cam-menu {
+  width: 240px;
+}
+
 /* Action row at the top of the dark popover; .act-item is styled for the
    light menus, so the colours are restated here. */
-#share-menu .act-item {
+.ctl-menu .act-item {
   color: var(--parchment);
   font-size: 13px;
 }
 
-#share-menu .act-item:hover {
+.ctl-menu .act-item:hover {
   background: var(--rail-raised);
 }
 
-#share-menu .act-item svg.ic {
+.ctl-menu .act-item svg.ic {
   color: var(--amber);
 }
 
@@ -519,7 +540,7 @@ body {
   margin: 6px 4px 2px;
 }
 
-#share-menu .menu-label {
+.ctl-menu .menu-label {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
@@ -555,6 +576,14 @@ body {
   background: var(--rail-raised);
 }
 
+/* Long device names truncate instead of blowing the menu open. */
+.opt-row span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* radio dot: hollow ring, amber core once chosen */
 .opt-dot {
   width: 14px;
@@ -574,7 +603,7 @@ body {
   color: var(--amber);
 }
 
-#share-menu .menu-note {
+.ctl-menu .menu-note {
   font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.06em;
@@ -650,6 +679,7 @@ body {
 #btn-chat {
   position: relative;
   align-self: center;
+  margin-left: auto; /* pushes itself to the right edge of the bar */
   background: var(--card);
   border: 1px solid var(--hairline);
   border-radius: 8px;
@@ -684,58 +714,20 @@ body {
 
 /* ---------- activities ---------- */
 
-/* pushes itself and the chat button to the right edge of the bar */
+/* Lives in the floating call bar; the popover anchors like the other
+   chevron menus. */
 #activities-wrap {
   position: relative;
-  margin-left: auto;
-  align-self: center;
-}
-
-#btn-activities {
-  background: var(--card);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  padding: 5px 10px;
-  font-size: 15px;
-  cursor: pointer;
-}
-
-#btn-activities:hover {
-  border-color: var(--amber-deep);
+  display: flex;
+  align-items: center;
 }
 
 #btn-activities.open {
-  background: var(--amber);
-  border-color: var(--amber-deep);
-}
-
-#btn-activities svg.ic {
-  width: 16px;
-  height: 16px;
-  vertical-align: -3px;
+  background: var(--sage-dim);
 }
 
 #activities-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  min-width: 240px;
-  background: var(--card);
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  padding: 6px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
-  z-index: 30;
-}
-
-#activities-menu .menu-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-  padding: 6px 10px 4px;
+  width: 240px;
 }
 
 .act-item {
@@ -1159,17 +1151,6 @@ body {
   display: block;
 }
 
-/* noise suppression off: a preference, not the danger red of a dead mic */
-#btn-noise.off {
-  background: var(--rail-raised);
-  color: var(--sage-dim);
-}
-
-#btn-noise.off:hover {
-  background: var(--sage-dim);
-  color: var(--parchment);
-}
-
 /* cam / screen actively sharing */
 .cbtn.on {
   background: var(--amber);
@@ -1290,6 +1271,16 @@ body {
 
 .video-tile:hover .tile-ctl {
   opacity: 1;
+}
+
+/* speaking ring: lit while that participant's audio is above the voice
+   floor (kept before .controlling so the amber control outline wins) */
+.video-tile.speaking {
+  outline: 2px solid var(--green);
+}
+
+.video-tile.speaking .tile-initial {
+  box-shadow: 0 0 0 3px var(--rail-raised), 0 0 0 5px var(--green);
 }
 
 .video-tile.controlling {

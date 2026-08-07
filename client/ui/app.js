@@ -104,7 +104,7 @@ let roomName = '';
 let roomKey = null;
 let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 
-const peers = new Map(); // id -> { name, inVoice, ping, awaitingPong }
+const peers = new Map(); // id -> { name, inVoice, ping (their reported server RTT), awaitingPong }
 const pcs = new Map();   // id -> { pc, polite, makingOffer, ignoreOffer, pending }
 
 // Latency probes. Peers answer one shared broadcast over the E2E channel, so
@@ -332,14 +332,23 @@ function handleE2E(from, payload) {
       break;
     }
     // Latency probe: everyone answers the shared broadcast; the reply is
-    // addressed back to the prober.
+    // addressed back to the prober. Both directions carry the sender's own
+    // server round trip (`rtt`), and that reported figure is what the roster
+    // shows — each user's link to the relay, the same number on every
+    // screen — rather than a viewer-relative relay path that differed
+    // depending on who was looking.
     case 'ping':
-      sendE2E({ kind: 'pong', to: from, n: payload.n });
+      if (peer) {
+        peer.ping = Number.isFinite(payload.rtt) ? Math.round(payload.rtt) : null;
+        peer.awaitingPong = false; // their ping proves the link as well as a pong
+        renderRoster();
+      }
+      sendE2E({ kind: 'pong', to: from, n: payload.n, rtt: selfPing });
       break;
     case 'pong':
       if (payload.to !== myId || !peer) return;
       if (!peerProbe || payload.n !== peerProbe.n) return;
-      peer.ping = Math.round(performance.now() - peerProbe.t);
+      peer.ping = Number.isFinite(payload.rtt) ? Math.round(payload.rtt) : null;
       peer.awaitingPong = false;
       renderRoster();
       break;
@@ -574,8 +583,22 @@ function retuneAllSenders() {
 // noiseSuppression still apply at capture, underneath; RNNoise stacks on top
 // and catches the keyboards, fans and room noise the built-in one misses.
 let noiseOn = localStorage.getItem('concord-denoise') !== '0';
-let micChain = null;      // { ctx, node, stream }
+let micChain = null;      // { ctx, node, src, stream }
 let micSendStream = null; // what peers get: denoised when available, else raw
+
+// Preferred capture devices, picked from the chevron menus on the mic and
+// camera buttons. Joining uses `ideal` so a favourite that got unplugged
+// falls back to the OS default instead of failing the call. A live switch
+// uses `exact`: with the old capture still open, an `ideal` request is
+// already satisfied by it and Chromium just hands the same device back.
+let micId = localStorage.getItem('concord-mic') || null;
+let camId = localStorage.getItem('concord-cam') || null;
+
+function micConstraints(strict) {
+  const c = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  if (micId) c.deviceId = strict ? { exact: micId } : { ideal: micId };
+  return c;
+}
 
 async function buildMicChain(raw) {
   const ctx = new AudioContext({ sampleRate: 48000 }); // RNNoise's native rate
@@ -588,7 +611,8 @@ async function buildMicChain(raw) {
       outputChannelCount: [1],
       processorOptions: { module }
     });
-    ctx.createMediaStreamSource(raw).connect(node);
+    const src = ctx.createMediaStreamSource(raw);
+    src.connect(node);
     const dest = ctx.createMediaStreamDestination();
     node.connect(dest);
     // Deliberately not connected to ctx.destination: no local monitoring.
@@ -609,6 +633,7 @@ async function buildMicChain(raw) {
       const dead = dest.stream.getAudioTracks()[0];
       micChain = null;
       micSendStream = micStream;
+      startLocalMeter(); // re-tap: the meter was on the dead denoised stream
       for (const st of pcs.values()) {
         for (const s of st.pc.getSenders()) {
           if (s.track === dead) s.replaceTrack(micStream.getAudioTracks()[0]).catch(() => {});
@@ -618,7 +643,7 @@ async function buildMicChain(raw) {
     };
     node.port.postMessage({ bypass: !noiseOn });
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-    return { ctx, node, stream: dest.stream };
+    return { ctx, node, src, stream: dest.stream };
   } catch (e) {
     ctx.close().catch(() => {});
     throw e;
@@ -627,9 +652,7 @@ async function buildMicChain(raw) {
 
 async function joinVoice() {
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    });
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
   } catch {
     addSystemMessage('microphone access denied — cannot join voice', true);
     return;
@@ -644,6 +667,8 @@ async function joinVoice() {
   // Create/resume the context inside this click so autoplay policy
   // cannot leave the per-peer gain graph suspended and silent.
   try { getAudioCtx(); } catch { /* element fallback still works */ }
+  startLocalMeter();
+  startSpeakingLoop();
 
   inVoice = true;
   micMuted = false;
@@ -665,6 +690,7 @@ function leaveVoice() {
   micChain?.ctx.close().catch(() => {});
   micChain = null;
   micSendStream = null;
+  stopSpeakingLoop();
   inVoice = false;
   micMuted = false;
   removeTile('me');
@@ -676,6 +702,50 @@ function toggleMute() {
   micMuted = !micMuted;
   micStream?.getAudioTracks().forEach(t => { t.enabled = !micMuted; });
   updateVoiceUI();
+}
+
+// Swap to the newly preferred microphone mid-call, without renegotiating.
+// The whole capture path is rebuilt on the new device — fresh stream, fresh
+// denoise chain — and the senders swap tracks in place via replaceTrack.
+async function switchMic() {
+  if (!inVoice) return; // preference stored; applies on the next join
+  let fresh;
+  try {
+    fresh = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(true) });
+  } catch (e) {
+    addSystemMessage('microphone switch failed: ' + (e.message || e), true);
+    return;
+  }
+  const oldStream = micStream;
+  const oldChain = micChain;
+  const oldTrack = micSendStream?.getAudioTracks()[0];
+
+  micStream = fresh;
+  fresh.getAudioTracks().forEach(t => { t.enabled = !micMuted; });
+  try {
+    micChain = await buildMicChain(fresh);
+    micSendStream = micChain.stream;
+  } catch (e) {
+    console.warn('noise suppression unavailable', e);
+    micChain = null;
+    micSendStream = fresh;
+  }
+
+  startLocalMeter(); // re-tap the speaking meter onto the rebuilt capture path
+
+  const newTrack = micSendStream.getAudioTracks()[0];
+  for (const st of pcs.values()) {
+    for (const s of st.pc.getSenders()) {
+      // Match the old mic track exactly: share audio also rides an audio sender.
+      if (s.track && s.track === oldTrack) s.replaceTrack(newTrack).catch(() => {});
+    }
+  }
+
+  oldStream?.getTracks().forEach(t => t.stop());
+  oldChain?.ctx.close().catch(() => {});
+  updateVoiceUI(); // noise toggle visibility can change with the chain
+  const label = fresh.getAudioTracks()[0]?.label;
+  if (label) addSystemMessage('microphone: ' + label);
 }
 
 // ---------- video / screen share ----------
@@ -705,9 +775,20 @@ async function startVideo(kind, source) {
         audio: false
       });
     } else {
-      videoStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
-      });
+      const cam = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+      if (camId) {
+        // `exact` — an `ideal` deviceId is too weak to actually move off the
+        // current device. If the saved camera is gone, retry on the default.
+        try {
+          videoStream = await navigator.mediaDevices.getUserMedia({
+            video: { ...cam, deviceId: { exact: camId } }
+          });
+        } catch {
+          videoStream = await navigator.mediaDevices.getUserMedia({ video: cam });
+        }
+      } else {
+        videoStream = await navigator.mediaDevices.getUserMedia({ video: cam });
+      }
     }
   } catch (e) {
     if (kind === 'screen') addSystemMessage('screen share unavailable: ' + (e.message || e), true);
@@ -1738,7 +1819,7 @@ function sendPings() {
       p.awaitingPong = true;
     }
     peerProbe = { n: ++pingSeq, t: performance.now() };
-    sendE2E({ kind: 'ping', n: peerProbe.n });
+    sendE2E({ kind: 'ping', n: peerProbe.n, rtt: selfPing });
   }
   renderRoster();
 }
@@ -1820,6 +1901,12 @@ function classifyPeerAudio(peerId) {
     try { entry.src.disconnect(); } catch { /* not connected yet */ }
     entry.kind = id === p?.shareAudioId ? 'share' : 'mic';
     entry.src.connect(entry.kind === 'share' ? pa.share : pa.mic);
+    // Side-tap for the speaking indicator; disconnect() above severed any
+    // previous tap along with the gain link, so reattach here.
+    if (entry.kind === 'mic') {
+      if (!entry.analyser) entry.analyser = makeAnalyser(getAudioCtx());
+      entry.src.connect(entry.analyser);
+    }
   }
 }
 
@@ -1862,6 +1949,100 @@ function applyPeerAudio(peerId) {
 function peerHasShareAudio(peerId) {
   const pa = peerAudio.get(peerId);
   return !!pa && [...pa.streams.values()].some(e => e.kind === 'share');
+}
+
+// ---------- speaking indicator ----------
+//
+// Everything is measured locally: voice flows peer-to-peer, so each client
+// hears everyone and can meter the streams it already has — no "I'm talking"
+// control messages, nothing extra for the server to relay. An AnalyserNode
+// taps the local mic and each peer's mic stream (share audio is skipped: a
+// video's soundtrack is not its sender speaking), and a short poll compares
+// RMS against a floor with a hold time so the ring doesn't flicker between
+// words.
+
+const SPEAK_RMS = 0.015;   // ~-36 dBFS; room noise after suppression sits well below
+const SPEAK_HOLD_MS = 400; // ring lingers through natural word gaps
+const speakBuf = new Float32Array(512);
+const speakingIds = new Set(); // 'me' or peer id
+const speakLast = new Map();   // id -> last time above the floor
+let speakTimer = null;
+let localMeter = null; // { src, analyser } tapping the outgoing mic
+
+function makeAnalyser(ctx) {
+  const an = ctx.createAnalyser();
+  an.fftSize = speakBuf.length;
+  return an;
+}
+
+function rmsOf(analyser) {
+  analyser.getFloatTimeDomainData(speakBuf);
+  let sum = 0;
+  for (let i = 0; i < speakBuf.length; i++) sum += speakBuf[i] * speakBuf[i];
+  return Math.sqrt(sum / speakBuf.length);
+}
+
+// Meters what peers actually receive (the denoised stream when available),
+// so sound RNNoise strips out doesn't light the ring.
+function startLocalMeter() {
+  stopLocalMeter();
+  const stream = micSendStream || micStream;
+  if (!stream) return;
+  try {
+    const ctx = getAudioCtx();
+    const analyser = makeAnalyser(ctx);
+    const src = ctx.createMediaStreamSource(stream);
+    src.connect(analyser); // analyser has no output: nothing audible
+    localMeter = { src, analyser };
+  } catch { /* no Web Audio: no self indicator */ }
+}
+
+function stopLocalMeter() {
+  try { localMeter?.src.disconnect(); } catch { /* already gone */ }
+  localMeter = null;
+}
+
+function setSpeaking(id, on) {
+  if (speakingIds.has(id) === on) return;
+  if (on) speakingIds.add(id); else speakingIds.delete(id);
+  document.getElementById('tile-' + id)?.classList.toggle('speaking', on);
+  const rosterId = id === 'me' ? myId : id;
+  document.getElementById('member-' + rosterId)?.classList.toggle('speaking', on);
+}
+
+function pollSpeaking() {
+  const now = performance.now();
+  const seen = new Set(['me']);
+  const check = (id, loud) => {
+    if (loud) speakLast.set(id, now);
+    setSpeaking(id, now - (speakLast.get(id) || 0) < SPEAK_HOLD_MS);
+  };
+  check('me', !micMuted && !!localMeter && rmsOf(localMeter.analyser) > SPEAK_RMS);
+  for (const [peerId, pa] of peerAudio) {
+    seen.add(peerId);
+    let loud = false;
+    for (const entry of pa.streams.values()) {
+      if (entry.kind !== 'share' && entry.analyser && rmsOf(entry.analyser) > SPEAK_RMS) loud = true;
+    }
+    check(peerId, loud);
+  }
+  // A peer whose audio is gone (left voice, link dropped) can no longer
+  // trip the meter, so their ring would stick without this sweep.
+  for (const id of [...speakingIds]) {
+    if (!seen.has(id)) setSpeaking(id, false);
+  }
+}
+
+function startSpeakingLoop() {
+  if (!speakTimer) speakTimer = setInterval(pollSpeaking, 120);
+}
+
+function stopSpeakingLoop() {
+  clearInterval(speakTimer);
+  speakTimer = null;
+  stopLocalMeter();
+  for (const id of [...speakingIds]) setSpeaking(id, false);
+  speakLast.clear();
 }
 
 // ---------- per-user context menu (right-click a member) ----------
@@ -1919,6 +2100,8 @@ function renderRoster() {
   $('#user-count').textContent = `Members — ${entries.length}`;
   for (const [id, p] of entries) {
     const li = document.createElement('li');
+    li.id = 'member-' + id;
+    if (speakingIds.has(id === myId ? 'me' : id)) li.classList.add('speaking');
     const dot = document.createElement('span');
     dot.className = 'dot';
     const nm = document.createElement('span');
@@ -1964,11 +2147,6 @@ function updateVoiceUI() {
   const btnMute = $('#btn-mute');
   btnMute.classList.toggle('off', micMuted);
   btnMute.title = micMuted ? 'Unmute microphone' : 'Mute microphone';
-
-  const btnNoise = $('#btn-noise');
-  btnNoise.hidden = !micChain; // wasm path failed: nothing to toggle
-  btnNoise.classList.toggle('off', !noiseOn);
-  btnNoise.title = noiseOn ? 'Noise suppression: on' : 'Noise suppression: off';
 
   const btnCam = $('#btn-cam');
   btnCam.classList.toggle('on', videoKind === 'cam');
@@ -2091,24 +2269,8 @@ applyChatState();
 $('#btn-voice').addEventListener('click', joinVoice);
 $('#btn-leave').addEventListener('click', leaveVoice);
 $('#btn-mute').addEventListener('click', toggleMute);
-$('#btn-noise').addEventListener('click', () => {
-  noiseOn = !noiseOn;
-  localStorage.setItem('concord-denoise', noiseOn ? '1' : '0');
-  micChain?.node.port.postMessage({ bypass: !noiseOn });
-  updateVoiceUI();
-});
 $('#btn-cam').addEventListener('click', () => (videoKind === 'cam' ? stopVideo() : startVideo('cam')));
 $('#btn-screen').addEventListener('click', () => (videoKind === 'screen' ? stopVideo() : openSharePicker()));
-
-$('#btn-activities').addEventListener('click', e => {
-  e.stopPropagation();
-  const menu = $('#activities-menu');
-  menu.hidden = !menu.hidden;
-  $('#btn-activities').classList.toggle('open', !menu.hidden);
-});
-document.addEventListener('click', e => {
-  if (!$('#activities-menu').hidden && !e.target.closest('#activities-wrap')) closeActivitiesMenu();
-});
 
 $('#act-youtube').addEventListener('click', () => {
   closeActivitiesMenu();
@@ -2436,16 +2598,38 @@ function renderShareMenu() {
       : 'applies to the next share';
 }
 
-function setShareMenuOpen(open) {
-  $('#share-menu').hidden = !open;
-  $('#btn-share-menu').classList.toggle('open', open);
-  if (open) renderShareMenu();
+// The call bar's chevron popovers (stream quality, mic, camera) share this
+// wiring. Only one may be open at a time — the chevron click stops
+// propagation, so without the explicit close-others an open sibling would
+// never see the click-away and the menus would stack on top of each other.
+const ctlMenus = [];
+
+function wireCtlMenu(wrapSel, btnSel, menuSel, render) {
+  const setOpen = open => {
+    if (open) for (const m of ctlMenus) { if (m.menuSel !== menuSel) m.setOpen(false); }
+    $(menuSel).hidden = !open;
+    $(btnSel).classList.toggle('open', open);
+    if (open) render();
+  };
+  ctlMenus.push({ menuSel, setOpen });
+  $(btnSel).addEventListener('click', e => {
+    e.stopPropagation();
+    setOpen($(menuSel).hidden);
+  });
+  // Click-away and Esc close it, like every other popover in the app.
+  // A pick re-renders its menu before the click reaches here, detaching the
+  // clicked row — closest() then finds nothing and misreads the click as
+  // outside. A detached target can only mean a menu row, so ignore it.
+  document.addEventListener('click', e => {
+    if (!$(menuSel).hidden && e.target.isConnected && !e.target.closest(wrapSel)) setOpen(false);
+  });
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !$(menuSel).hidden) setOpen(false);
+  });
+  return setOpen;
 }
 
-$('#btn-share-menu').addEventListener('click', e => {
-  e.stopPropagation();
-  setShareMenuOpen($('#share-menu').hidden);
-});
+const setShareMenuOpen = wireCtlMenu('#screen-wrap', '#btn-share-menu', '#share-menu', renderShareMenu);
 
 // Swap to a different window or screen without dropping out of the share.
 $('#share-change').addEventListener('click', () => {
@@ -2453,15 +2637,114 @@ $('#share-change').addEventListener('click', () => {
   openSharePicker();
 });
 
-// Click-away and Esc close it, like every other popover in the app.
-document.addEventListener('click', e => {
-  if (!$('#share-menu').hidden && !e.target.closest('#screen-wrap')) setShareMenuOpen(false);
-});
-window.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !$('#share-menu').hidden) setShareMenuOpen(false);
-});
-
 renderShareMenu();
+
+// ---------- input device menus ----------
+//
+// Chevrons on the mic and camera buttons, same split pill as the share
+// button. A pick sticks in localStorage and applies immediately when that
+// input is live. Labels are only readable once permission is granted, and
+// these menus live in the call bar, so that is always true here.
+
+function currentDeviceId(kind) {
+  // What is actually capturing beats what was asked for: `ideal` may have
+  // fallen back, and Windows' "default" alias resolves to a concrete device.
+  const track =
+    kind === 'audioinput'
+      ? micStream?.getAudioTracks()[0]
+      : videoKind === 'cam'
+        ? videoStream?.getVideoTracks()[0]
+        : null;
+  return track?.getSettings?.().deviceId || (kind === 'audioinput' ? micId : camId);
+}
+
+async function renderDeviceList(kind, holder, onPick) {
+  holder.textContent = 'looking for devices…';
+  let all = [];
+  try {
+    all = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === kind);
+  } catch { /* fall through to the empty message */ }
+  // Windows lists "default"/"communications" aliases on top of the real
+  // devices; drop them so each microphone shows up once.
+  const real = all.filter(d => d.deviceId !== 'default' && d.deviceId !== 'communications');
+  const devices = real.length ? real : all;
+  if (!devices.length) {
+    holder.textContent = 'no devices found';
+    return;
+  }
+
+  // A track captured without an explicit pick reports the 'default' alias as
+  // its deviceId; map that onto the real device it stands for (same group,
+  // or the "Default - <label>" naming) so the dot lands on a visible row.
+  let active = currentDeviceId(kind);
+  if (active === 'default' || active === 'communications') {
+    const alias = all.find(d => d.deviceId === active);
+    const target =
+      alias &&
+      real.find(
+        d =>
+          (d.groupId && d.groupId === alias.groupId) ||
+          (d.label && alias.label && alias.label.endsWith(d.label))
+      );
+    if (target) active = target.deviceId;
+  }
+  // Best effort when nothing matches: the first row stands in for "default".
+  const activeIdx = Math.max(0, devices.findIndex(d => d.deviceId === active));
+
+  const fallback = kind === 'audioinput' ? 'microphone' : 'camera';
+  holder.replaceChildren(
+    ...devices.map((d, i) =>
+      optionRow(d.label || `${fallback} ${i + 1}`, i === activeIdx, () => onPick(d.deviceId))
+    )
+  );
+}
+
+// A pick leaves the menu open so devices can be tried in a row — it closes
+// on click-away, Esc or the chevron, like the quality menu. The dot follows
+// the live track, so the list re-renders once the switch has landed.
+function renderMicMenu() {
+  // Noise suppression rides along in the mic menu; no row when the wasm
+  // denoiser is not running, since there is nothing to toggle.
+  $('#mic-noise').replaceChildren(
+    ...(micChain
+      ? [
+          optionRow('Noise suppression', noiseOn, () => {
+            noiseOn = !noiseOn;
+            localStorage.setItem('concord-denoise', noiseOn ? '1' : '0');
+            micChain?.node.port.postMessage({ bypass: !noiseOn });
+            renderMicMenu();
+          })
+        ]
+      : [])
+  );
+  renderDeviceList('audioinput', $('#mic-devices'), id => {
+    micId = id;
+    localStorage.setItem('concord-mic', id);
+    switchMic().then(renderMicMenu);
+  });
+}
+
+function renderCamMenu() {
+  renderDeviceList('videoinput', $('#cam-devices'), id => {
+    camId = id;
+    localStorage.setItem('concord-cam', id);
+    // A live camera restarts on the new device; otherwise it waits its turn.
+    if (videoKind === 'cam') startVideo('cam').then(renderCamMenu);
+    else renderCamMenu();
+  });
+}
+
+const setMicMenuOpen = wireCtlMenu('#mic-wrap', '#btn-mic-menu', '#mic-menu', renderMicMenu);
+const setCamMenuOpen = wireCtlMenu('#cam-wrap', '#btn-cam-menu', '#cam-menu', renderCamMenu);
+// Static content, so nothing to render on open; joining the registry keeps
+// it exclusive with the other call-bar popovers.
+wireCtlMenu('#activities-wrap', '#btn-activities', '#activities-menu', () => {});
+
+// Plugging or unplugging hardware refreshes any open list.
+navigator.mediaDevices.addEventListener?.('devicechange', () => {
+  if (!$('#mic-menu').hidden) renderMicMenu();
+  if (!$('#cam-menu').hidden) renderCamMenu();
+});
 
 window.addEventListener('beforeunload', () => {
   if (inVoice) leaveVoice();

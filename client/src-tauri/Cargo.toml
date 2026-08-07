@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "1.0.2"
+version = "1.1.0"
 edition = "2021"
 description = "Audere — self-hosted, end-to-end encrypted chat, voice, video and screen sharing"
 license = "AGPL-3.0-only"

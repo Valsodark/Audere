@@ -63,16 +63,6 @@
       <div id="channel-bar">
         <span class="channel-title"><span class="hash">#</span><span id="channel-name"></span></span>
         <span class="e2e-badge" title="Messages, voice and video are end-to-end encrypted">E2E</span>
-        <span id="activities-wrap">
-          <button id="btn-activities" title="Activities"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></button>
-          <div id="activities-menu" hidden>
-            <h3 class="menu-label">Activities</h3>
-            <button class="act-item" id="act-youtube" type="button">
-              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/></svg>
-              <span>Watch YouTube together</span>
-            </button>
-          </div>
-        </span>
         <button id="btn-chat" title="Toggle chat"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><span id="chat-unread" hidden></span></button>
       </div>
 
@@ -90,27 +80,46 @@
 
       <!-- Floating in-call controls -->
       <div id="call-bar" hidden>
-        <button id="btn-mute" class="cbtn" title="Mute microphone">
-          <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
-          <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
-        </button>
-        <button id="btn-noise" class="cbtn" title="Noise suppression: on">
-          <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-        </button>
-        <button id="btn-cam" class="cbtn" title="Share camera">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        </button>
-        <span id="screen-wrap">
+        <span id="mic-wrap" class="ctl-wrap">
+          <button id="btn-mute" class="cbtn" title="Mute microphone">
+            <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+            <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+          </button>
+          <button id="btn-mic-menu" class="ctl-caret" title="Choose microphone">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
+
+          <!-- Microphone device popover -->
+          <div id="mic-menu" class="ctl-menu" hidden>
+            <div id="mic-noise" class="opt-group"></div>
+            <h3 class="menu-label">Microphone</h3>
+            <div id="mic-devices" class="opt-group"></div>
+          </div>
+        </span>
+        <span id="cam-wrap" class="ctl-wrap">
+          <button id="btn-cam" class="cbtn" title="Share camera">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          </button>
+          <button id="btn-cam-menu" class="ctl-caret" title="Choose camera">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
+
+          <!-- Camera device popover -->
+          <div id="cam-menu" class="ctl-menu" hidden>
+            <h3 class="menu-label">Camera</h3>
+            <div id="cam-devices" class="opt-group"></div>
+          </div>
+        </span>
+        <span id="screen-wrap" class="ctl-wrap">
           <button id="btn-screen" class="cbtn" title="Share screen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><path d="M12 13V8"/><path d="M9.5 10.5 12 8l2.5 2.5"/></svg>
           </button>
-          <button id="btn-share-menu" title="Stream quality">
+          <button id="btn-share-menu" class="ctl-caret" title="Stream quality">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
           </button>
 
           <!-- Stream quality popover -->
-          <div id="share-menu" hidden>
+          <div id="share-menu" class="ctl-menu" hidden>
             <button id="share-change" class="act-item" type="button" hidden>
               <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
               <span>Change stream</span>
@@ -122,6 +131,16 @@
             <h3 class="menu-label">Resolution</h3>
             <div id="share-res" class="opt-group"></div>
             <p class="menu-note">applies to the next share</p>
+          </div>
+        </span>
+        <span id="activities-wrap">
+          <button id="btn-activities" class="cbtn" title="Activities"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></button>
+          <div id="activities-menu" class="ctl-menu" hidden>
+            <h3 class="menu-label">Activities</h3>
+            <button class="act-item" id="act-youtube" type="button">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/></svg>
+              <span>Watch YouTube together</span>
+            </button>
           </div>
         </span>
         <button id="btn-leave" class="cbtn leave" title="Leave voice">
