@@ -254,20 +254,28 @@ async function connect(server, name, room, passphrase) {
         renderRoster();
         break;
       }
+      // Decryption is async, so without a queue two arriving messages race
+      // through unseal and can be HANDLED in reversed order — fatal for
+      // signaling (see sendSealed). handleSignal is awaited inside the chain
+      // so each description is fully applied before the next one starts.
       case 'chat': {
-        let payload;
-        try { payload = await unseal(msg.data); }
-        catch {
-          addSystemMessage('received a message that could not be decrypted (different passphrase?)', true);
-          return;
-        }
-        handleE2E(msg.from, payload);
+        recvChain = recvChain.then(async () => {
+          let payload;
+          try { payload = await unseal(msg.data); }
+          catch {
+            addSystemMessage('received a message that could not be decrypted (different passphrase?)', true);
+            return;
+          }
+          handleE2E(msg.from, payload);
+        }).catch(e => console.warn('chat handling failed', e));
         break;
       }
       case 'signal': {
-        let payload;
-        try { payload = await unseal(msg.data); } catch { return; }
-        handleSignal(msg.from, payload);
+        recvChain = recvChain.then(async () => {
+          let payload;
+          try { payload = await unseal(msg.data); } catch { return; }
+          await handleSignal(msg.from, payload);
+        }).catch(e => console.warn('signal handling failed', e));
         break;
       }
       case 'pong': {
@@ -297,12 +305,28 @@ function sendRaw(msg) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-async function sendE2E(payload) {
-  sendRaw({ type: 'chat', data: await seal(payload) });
+// seal()/unseal() are async, and two crypto operations in flight can resolve
+// out of order. Chat survives a swap; WebRTC signaling does not — an answer
+// overtaking the offer it replies to (or two offers crossing) wedges the
+// connection with a video track that stays muted forever, which is exactly
+// the intermittent black-share failure. Every encrypted send therefore goes
+// through one chain that preserves submission order on the wire, and the
+// receive side (below) mirrors it.
+let sendChain = Promise.resolve();
+let recvChain = Promise.resolve();
+
+function sendSealed(build) {
+  const p = sendChain.then(build);
+  sendChain = p.catch(e => console.warn('sealed send failed', e));
+  return p;
 }
 
-async function sendSignal(to, payload) {
-  sendRaw({ type: 'signal', to, data: await seal(payload) });
+function sendE2E(payload) {
+  return sendSealed(async () => sendRaw({ type: 'chat', data: await seal(payload) }));
+}
+
+function sendSignal(to, payload) {
+  return sendSealed(async () => sendRaw({ type: 'signal', to, data: await seal(payload) }));
 }
 
 function handleE2E(from, payload) {
@@ -339,7 +363,10 @@ function handleE2E(from, payload) {
     // depending on who was looking.
     case 'ping':
       if (peer) {
-        peer.ping = Number.isFinite(payload.rtt) ? Math.round(payload.rtt) : null;
+        // Only overwrite with a real figure: a peer on an older build sends
+        // no rtt, and its measured fallback (set below on pong) would be
+        // wiped to a blank every 5 s otherwise.
+        if (Number.isFinite(payload.rtt)) peer.ping = Math.round(payload.rtt);
         peer.awaitingPong = false; // their ping proves the link as well as a pong
         renderRoster();
       }
@@ -348,7 +375,11 @@ function handleE2E(from, payload) {
     case 'pong':
       if (payload.to !== myId || !peer) return;
       if (!peerProbe || payload.n !== peerProbe.n) return;
-      peer.ping = Number.isFinite(payload.rtt) ? Math.round(payload.rtt) : null;
+      peer.ping = Number.isFinite(payload.rtt)
+        ? Math.round(payload.rtt)
+        // Old build across the wire: fall back to the measured round trip so
+        // a mixed-version room shows an approximate figure, not a blank.
+        : Math.round(performance.now() - peerProbe.t);
       peer.awaitingPong = false;
       renderRoster();
       break;
@@ -805,6 +836,7 @@ async function startVideo(kind, source) {
     tuneVideoSender(st.pc.addTrack(track, videoStream));
     preferVideoCodec(st.pc);
   }
+  startShareWatchdog();
   setTileStream('me', videoStream, kind === 'cam');
   if (kind === 'screen') {
     startAutoQuality();
@@ -818,8 +850,55 @@ async function startVideo(kind, source) {
   updateVoiceUI();
 }
 
+// Last-resort share recovery. A link where the video sender exists but the
+// encoder never produces a frame is a wedged negotiation; nudging the state
+// machine that got itself there is a gamble, so the link is torn down and
+// rebuilt from scratch instead (costs a moment of audio, which beats an
+// indefinite black tile on the far side).
+let shareWatchdog = null;
+const shareSenderSeen = new Map(); // peerId -> when its video sender appeared
+const shareRebuiltAt = new Map();  // peerId -> last rebuild, to avoid loops
+
+function startShareWatchdog() {
+  if (shareWatchdog) return;
+  shareWatchdog = setInterval(async () => {
+    if (!videoStream) return;
+    for (const [id, st] of [...pcs]) {
+      const sender = st.pc.getSenders().find(
+        s => s.track?.kind === 'video' && s.track.readyState === 'live'
+      );
+      if (!sender) { shareSenderSeen.delete(id); continue; }
+      const first = shareSenderSeen.get(id) ?? performance.now();
+      shareSenderSeen.set(id, first);
+      // Grace period: negotiation plus encoder spin-up take a moment.
+      if (performance.now() - first < 8000) continue;
+      let stats;
+      try { stats = await st.pc.getStats(sender); } catch { continue; }
+      let encoded = 0;
+      stats.forEach(r => {
+        if (r.type === 'outbound-rtp' && r.kind === 'video') encoded += r.framesEncoded || 0;
+      });
+      if (encoded > 0) continue;
+      if (performance.now() - (shareRebuiltAt.get(id) || 0) < 30000) continue;
+      shareRebuiltAt.set(id, performance.now());
+      shareSenderSeen.delete(id);
+      addSystemMessage(`share to ${peers.get(id)?.name || 'peer'} stalled — rebuilding the link`, true);
+      closePeer(id);
+      if (inVoice && peers.get(id)?.inVoice) ensurePeer(id);
+    }
+  }, 4000);
+}
+
+function stopShareWatchdog() {
+  clearInterval(shareWatchdog);
+  shareWatchdog = null;
+  shareSenderSeen.clear();
+  shareRebuiltAt.clear();
+}
+
 function stopVideo() {
   if (!videoStream) return;
+  stopShareWatchdog();
   stopAutoQuality();
   stopShareAudio();
   stopHwCapture();
